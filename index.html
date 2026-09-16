@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>금붕어 키우기 게임 (Fish Feeding Game)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0d1b2a;
+            color: #fff;
+            font-family: 'Malgun Gothic', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 게임 영역 */
+        #game-container {
+            position: relative;
+            width: 1000px;
+            height: 600px;
+            box-shadow: 0 0 30px rgba(0, 180, 216, 0.4);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 4px solid #00b4d8;
+        }
+
+        canvas {
+            background: linear-gradient(180deg, #0077b6 0%, #03045e 100%);
+            display: block;
+        }
+
+        /* UI 오버레이 */
+        #ui-layer {
+            position: absolute;
+            top: 15px;
+            left: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* 게임 오버 & 클리어 화면 */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+
+        #overlay h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+
+        #overlay p {
+            font-size: 18px;
+            margin-bottom: 25px;
+            color: #caf0f8;
+        }
+
+        #start-btn {
+            padding: 12px 30px;
+            font-size: 22px;
+            font-weight: bold;
+            background-color: #ffb703;
+            color: #023047;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 15px rgba(255, 183, 3, 0.4);
+        }
+
+        #start-btn:hover {
+            background-color: #fb8500;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="1000" height="600"></canvas>
+
+        <div id="ui-layer">
+            <div>내 크기: <span id="size-display" style="color: #ffb703;">1.0</span> / 100</div>
+        </div>
+
+        <div id="overlay">
+            <h1 id="overlay-title">금붕어 대격돌!</h1>
+            <p id="overlay-msg">화살표 키 또는 WASD 키로 이동하세요.<br>나보다 작은 물고기를 먹고 크기 100 달성에 도전해보세요!</p>
+            <button id="start-btn" onclick="startGame()">게임 시작</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const sizeDisplay = document.getElementById('size-display');
+        const overlay = document.getElementById('overlay');
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlayMsg = document.getElementById('overlay-msg');
+        const startBtn = document.getElementById('start-btn');
+
+        let animationFrameId = null;
+        let isGameRunning = false;
+
+        // 키 입력 상태
+        const keys = {
+            ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+            w: false, s: false, a: false, d: false
+        };
+
+        // 내 물고기 (금붕어) 객체
+        let player = {
+            x: 500,
+            y: 300,
+            size: 1, // 크기 1에서 시작
+            speed: 3.5,
+            direction: 1 // 1: 오른쪽, -1: 왼쪽
+        };
+
+        // 적으로 등장하는 물고기 배열
+        let fishes = [];
+
+        // 물고기 색상 및 아이콘 모음 (크기에 따른 분위기 구분)
+        const fishColors = ['#ff4d6d', '#ff758f', '#ffb703', '#2a9d8f', '#e76f51', '#48cae4', '#9d4edd', '#ff006e'];
+
+        // 키 이벤트 리스너
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = false;
+            }
+        });
+
+        // 게임 시작/재시작
+        function startGame() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.size = 1;
+            player.speed = 3.5;
+            player.direction = 1;
+
+            fishes = [];
+            // 초기 물고기들 생성
+            for (let i = 0; i < 15; i++) {
+                spawnFish(true);
+            }
+
+            overlay.style.display = 'none';
+            isGameRunning = true;
+
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            gameLoop();
+        }
+
+        // 물고기 생성 로직
+        function spawnFish(initial = false) {
+            const direction = Math.random() < 0.5 ? 1 : -1;
+            const x = initial ? Math.random() * canvas.width : (direction === 1 ? -60 : canvas.width + 60);
+            const y = Math.random() * (canvas.height - 60) + 30;
+
+            // 플레이어 크기를 기준으로 다양하게 세팅
+            // 먹을 수 있는 작은 물고기와 더 큰 물고기를 적절히 섞어서 생성
+            let minSize = Math.max(1, Math.floor(player.size * 0.4));
+            let maxSize = Math.min(100, Math.floor(player.size * 1.8) + 2);
+            
+            // 극초반(크기 1~3)에는 살아남기 쉽게 작은 물고기 비중을 늘림
+            if (player.size < 3) {
+                maxSize = Math.min(100, Math.floor(player.size * 2.5) + 1);
+            }
+
+            let size = Math.floor(Math.random() * (maxSize - minSize + 1)) + minSize;
+            size = Math.min(100, Math.max(1, size));
+
+            // 크기에 비례하여 이동 속도 계산 (작을수록 빠르고, 크면 둔함)
+            const speed = Math.max(1, 4 - (size * 0.025)) + Math.random() * 0.5;
+
+            fishes.push({
+                x: x,
+                y: y,
+                size: size,
+                speed: speed,
+                direction: direction,
+                color: fishColors[Math.floor(Math.random() * fishColors.length)]
+            });
+        }
+
+        // 물고기 그리기 (타원, 꼬리, 눈, 크기 텍스트 표시)
+        function drawFish(x, y, size, direction, color, isPlayer = false) {
+            ctx.save();
+            ctx.translate(x, y);
+
+            // 물고기 크기 시각화 공식 (반지름 R)
+            // 크기 1 -> 반지름 ~10px, 크기 100 -> 반지름 ~75px
+            const radiusX = 10 + size * 0.65;
+            const radiusY = radiusX * 0.6;
+
+            // 좌우 반전 처리
+            if (direction === -1) {
+                ctx.scale(-1, 1);
+            }
+
+            // 꼬리 지느러미
+            ctx.fillStyle = isPlayer ? '#ff7b00' : color;
+            ctx.beginPath();
+            ctx.moveTo(-radiusX * 0.8, 0);
+            ctx.lineTo(-radiusX * 1.5, -radiusY * 0.8);
+            ctx.lineTo(-radiusX * 1.5, radiusY * 0.8);
+            ctx.closePath();
+            ctx.fill();
+
+            // 몸통
+            ctx.beginPath();
+            ctx.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+            ctx.fillStyle = isPlayer ? '#ff9e00' : color;
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = isPlayer ? '#ffffff' : 'rgba(0, 0, 0, 0.3)';
+            ctx.stroke();
+
+            // 눈
+            ctx.beginPath();
+            ctx.arc(radiusX * 0.5, -radiusY * 0.3, radiusY * 0.25, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(radiusX * 0.55, -radiusY * 0.3, radiusY * 0.12, 0, Math.PI * 2);
+            ctx.fillStyle = '#000000';
+            ctx.fill();
+
+            // 반전 초기화하여 텍스트가 거꾸로 보이지 않게 처리
+            ctx.restore();
+
+            // 몸통 위에 크기(숫자) 표시
+            ctx.save();
+            ctx.font = `bold ${Math.max(12, Math.floor(radiusY * 0.8))}px Arial`;
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#000000';
+            ctx.shadowBlur = 4;
+            // 숫자를 몸통 중앙에 렌더링
+            ctx.fillText(size.toFixed(1).replace('.0', ''), x, y);
+            ctx.restore();
+        }
+
+        // 플레이어 이동 업데이트
+        function updatePlayer() {
+            let dx = 0;
+            let dy = 0;
+
+            if (keys.ArrowUp || keys.w) dy -= 1;
+            if (keys.ArrowDown || keys.s) dy += 1;
+            if (keys.ArrowLeft || keys.a) {
+                dx -= 1;
+                player.direction = -1;
+            }
+            if (keys.ArrowRight || keys.d) {
+                dx += 1;
+                player.direction = 1;
+            }
+
+            // 대각선 이동 속도 보정
+            if (dx !== 0 && dy !== 0) {
+                dx *= 0.7071;
+                dy *= 0.7071;
+            }
+
+            // 크기가 커질수록 이동 속도를 약간 둔하게 조정 (최소 1.8 유지)
+            player.speed = Math.max(1.8, 3.8 - (player.size * 0.015));
+
+            player.x += dx * player.speed;
+            player.y += dy * player.speed;
+
+            // 화면 경계 제한
+            const radiusX = 10 + player.size * 0.65;
+            const radiusY = radiusX * 0.6;
+
+            player.x = Math.max(radiusX, Math.min(canvas.width - radiusX, player.x));
+            player.y = Math.max(radiusY, Math.min(canvas.height - radiusY, player.y));
+        }
+
+        // 게임 루프
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            // 배경 그리기
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 플레이어 이동 처리
+            updatePlayer();
+
+            // 플레이어 그리기
+            drawFish(player.x, player.y, player.size, player.direction, null, true);
+
+            const playerRadius = 10 + player.size * 0.65;
+
+            // 물고기 수 유지
+            if (fishes.length < 15) {
+                spawnFish();
+            }
+
+            // 적 물고기 루프 처리
+            for (let i = fishes.length - 1; i >= 0; i--) {
+                const fish = fishes[i];
+
+                // 이동
+                fish.x += fish.speed * fish.direction;
+
+                // 화면 밖으로 완전히 나가면 삭제
+                if ((fish.direction === 1 && fish.x > canvas.width + 100) ||
+                    (fish.direction === -1 && fish.x < -100)) {
+                    fishes.splice(i, 1);
+                    continue;
+                }
+
+                // 물고기 그리기
+                drawFish(fish.x, fish.y, fish.size, fish.direction, fish.color);
+
+                // 충돌 검사 (원의 중심 간 거리 기준)
+                const targetRadius = 10 + fish.size * 0.65;
+                const dist = Math.hypot(player.x - fish.x, player.y - fish.y);
+                const collisionThreshold = (playerRadius + targetRadius) * 0.7; // 약간 유연한 판정
+
+                if (dist < collisionThreshold) {
+                    if (player.size >= fish.size) {
+                        // **나보다 작거나 같은 물고기를 먹음**
+                        // 더 큰 물고기를 먹을수록 더 많이 커지는 공식 적용
+                        // 보상 = 먹은 물고기 크기 * 0.15 + (먹은 물고기 크기 / 현재 내 크기) * 0.3
+                        const sizeGain = (fish.size * 0.12) + (fish.size / player.size) * 0.25;
+                        player.size += Math.max(0.1, sizeGain);
+                        
+                        // 최고 크기 100 제한
+                        if (player.size > 100) player.size = 100;
+
+                        // UI 업데이트
+                        sizeDisplay.innerText = player.size.toFixed(1);
+
+                        // 물고기 제거
+                        fishes.splice(i, 1);
+
+                        // 승리 조건 체크 (크기 100 이상 달성)
+                        if (player.size >= 100) {
+                            endGame(true);
+                            return;
+                        }
+                    } else {
+                        // **나보다 큰 물고기와 부딪힘 -> 사망**
+                        endGame(false);
+                        return;
+                    }
+                }
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // 게임 종료 처리 (패배 / 승리)
+        function endGame(isVictory) {
+            isGameRunning = false;
+            cancelAnimationFrame(animationFrameId);
+
+            if (isVictory) {
+                overlayTitle.innerText = "🏆 전설의 거대 금붕어 승리! 🏆";
+                overlayTitle.style.color = "#ffb703";
+                overlayMsg.innerText = `축하합니다! 크기 100 달성으로 바다의 정점에 섰습니다!`;
+            } else {
+                overlayTitle.innerText = "💥 으악! 상어밥이 되었습니다 💥";
+                overlayTitle.style.color = "#ff4d6d";
+                overlayMsg.innerText = `더 큰 물고기에게 먹혔습니다...\n최종 크기: ${player.size.toFixed(1)}`;
+            }
+
+            startBtn.innerText = "다시 도전하기";
+            overlay.style.display = 'flex';
+        }
+    </script>
+</body>
+</html>
